@@ -1,14 +1,25 @@
 "use client"
 
+declare global {
+  interface Window {
+    ethereum?: any;
+  }
+}
+
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ArrowUpDown, ArrowRight, ArrowRightLeft, Wallet, CheckCircle, AlertCircle } from "lucide-react"
+import { ArrowUpDown, ArrowRight, ArrowRightLeft, Wallet, CheckCircle, AlertCircle, Server, Settings } from "lucide-react"
 import { BridgeAnimation } from "@/components/bridge-animation"
+import { BridgeStatus } from "@/components/bridge-status"
+import { AdvancedBridge } from "@/components/advanced-bridge"
+import { useBridge } from "@/lib/use-bridge"
+import { bridgeAPI } from "@/lib/bridge-api"
 
-const chains = [
+// Default chains fallback (used when bridge server is not available)
+const defaultChains = [
   { id: "ethereum", name: "Ethereum", symbol: "ETH", chainId: "0x1" },
   { id: "polygon", name: "Polygon", symbol: "MATIC", chainId: "0x89" },
   { id: "bsc", name: "BSC", symbol: "BNB", chainId: "0x38" },
@@ -21,20 +32,53 @@ export default function CryptoBridge() {
   const [fromChain, setFromChain] = useState<string>("")
   const [toChain, setToChain] = useState<string>("")
   const [amount, setAmount] = useState<string>("")
+  const [token, setToken] = useState<string>("USDC")
   const [isTransferring, setIsTransferring] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState<string>("")
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState<string>("")
+  const [activeTab, setActiveTab] = useState<'simple' | 'advanced' | 'status'>('simple')
+  const [availableChains, setAvailableChains] = useState(defaultChains)
+  
+  // Bridge API integration
+  const { 
+    performTransfer, 
+    isLoading: bridgeLoading, 
+    error: bridgeError, 
+    lastTransaction,
+    clearError: clearBridgeError 
+  } = useBridge()
 
   // Check if Core Wallet is installed
   const isCoreWalletInstalled = () => {
     return typeof window !== 'undefined' && window.ethereum && window.ethereum.isAvalanche
   }
 
-  // Check connection on component mount
+  // Fetch available chains from bridge server
+  const fetchAvailableChains = async () => {
+    try {
+      const response = await bridgeAPI.getBlockchains()
+      if (response.success && response.blockchains.length > 0) {
+        // Transform bridge server chains to match our format
+        const transformedChains = response.blockchains.map(chain => ({
+          id: chain.name,
+          name: chain.name.charAt(0).toUpperCase() + chain.name.slice(1),
+          symbol: chain.name.toUpperCase().slice(0, 3),
+          chainId: chain.id.slice(0, 10) + '...'
+        }))
+        setAvailableChains(transformedChains)
+      }
+    } catch (error) {
+      console.log('Using default chains as bridge server is not available')
+      setAvailableChains(defaultChains)
+    }
+  }
+
+  // Check connection on component mount and fetch available chains
   useEffect(() => {
     checkConnection()
+    fetchAvailableChains()
   }, [])
 
   const checkConnection = async () => {
@@ -132,9 +176,24 @@ export default function CryptoBridge() {
     if (!fromChain || !toChain || !amount || fromChain === toChain || !isConnected) return
 
     setIsTransferring(true)
-    // Simulate transfer delay
-    await new Promise((resolve) => setTimeout(resolve, 8000))
-    setIsTransferring(false)
+    
+    try {
+      const result = await performTransfer({
+        amount: parseFloat(amount),
+        token,
+        sourceChain: fromChain,
+        destChain: toChain,
+      })
+      
+      if (result) {
+        // Success - the bridge API will handle the state
+        console.log('Bridge transfer successful:', result)
+      }
+    } catch (error) {
+      console.error('Bridge transfer failed:', error)
+    } finally {
+      setIsTransferring(false)
+    }
   }
 
   const canSend = fromChain && toChain && amount && fromChain !== toChain && !isTransferring && isConnected
@@ -143,10 +202,44 @@ export default function CryptoBridge() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 dark:from-gray-900 dark:to-gray-800 p-4">
       <div className="max-w-2xl mx-auto pt-8">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">Crypto Bridge</h1>
+          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">Avalanche ICM Bridge</h1>
           <p className="text-gray-600 dark:text-gray-300">
-            Transfer your assets seamlessly across different blockchains
+            Transfer your assets seamlessly across different blockchains using Avalanche's Inter-Chain Messaging
           </p>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="flex space-x-1 mb-6 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+          <button
+            onClick={() => setActiveTab('simple')}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'simple'
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            Simple Bridge
+          </button>
+          <button
+            onClick={() => setActiveTab('advanced')}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'advanced'
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            Advanced Operations
+          </button>
+          <button
+            onClick={() => setActiveTab('status')}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'status'
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            Server Status
+          </button>
         </div>
 
         {/* Wallet Connection Card */}
@@ -210,22 +303,39 @@ export default function CryptoBridge() {
           </CardContent>
         </Card>
 
-        <Card className="relative overflow-hidden">
-          <CardHeader>
-            <CardTitle className="text-center">Bridge Assets</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* From & To Chains Side by Side */}
-            <div className="flex items-end justify-between w-full">
-              {/* From Chain */}
+        {/* Tab Content */}
+        {activeTab === 'simple' && (
+          <Card className="relative overflow-hidden">
+            <CardHeader>
+              <CardTitle className="text-center">Simple Bridge</CardTitle>
+              <div className="text-center">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {availableChains === defaultChains 
+                    ? "Using default chain list (bridge server not connected)"
+                    : `Connected to bridge server - ${availableChains.length} chains available`
+                  }
+                </p>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* From & To Chains Side by Side */}
+              <div className="flex items-end justify-between w-full">
+                              {/* From Chain */}
               <div className="flex-1 space-y-2">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">From Chain</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">From Chain</label>
+                  {availableChains === defaultChains && (
+                    <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 px-2 py-1 rounded">
+                      Using Default Chains
+                    </span>
+                  )}
+                </div>
                 <Select value={fromChain} onValueChange={setFromChain} disabled={!isConnected}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select source chain" />
                   </SelectTrigger>
                   <SelectContent>
-                    {chains.map((chain) => (
+                    {availableChains.map((chain) => (
                       <SelectItem key={chain.id} value={chain.id} disabled={chain.id === toChain}>
                         {chain.name} ({chain.symbol})
                       </SelectItem>
@@ -234,77 +344,139 @@ export default function CryptoBridge() {
                 </Select>
               </div>
 
-              {/* Swap Button */}
-              <div className="mx-4 flex-shrink-0 flex items-center justify-center">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={handleSwapChains}
-                  disabled={isTransferring || !isConnected}
-                  className="rounded-full bg-transparent"
-                >
-                  <ArrowRightLeft className="h-4 w-4" />
-                </Button>
-              </div>
+                {/* Swap Button */}
+                <div className="mx-4 flex-shrink-0 flex items-center justify-center">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={handleSwapChains}
+                    disabled={isTransferring || !isConnected}
+                    className="rounded-full bg-transparent"
+                  >
+                    <ArrowRightLeft className="h-4 w-4" />
+                  </Button>
+                </div>
 
-              {/* To Chain */}
-              <div className="flex-1 space-y-2 flex flex-col items-end">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">To Chain</label>
-                <Select value={toChain} onValueChange={setToChain} disabled={!isConnected}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select destination chain" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {chains.map((chain) => (
+                {/* To Chain */}
+                <div className="flex-1 space-y-2 flex flex-col items-end">
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">To Chain</label>
+                  <Select value={toChain} onValueChange={setToChain} disabled={!isConnected}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select destination chain" />
+                    </SelectTrigger>
+                    <SelectContent>
+                                          {availableChains.map((chain) => (
                       <SelectItem key={chain.id} value={chain.id} disabled={chain.id === fromChain}>
                         {chain.name} ({chain.symbol})
                       </SelectItem>
                     ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Token Selection */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Token</label>
+                <Select value={token} onValueChange={setToken} disabled={!isConnected}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USDC">USDC</SelectItem>
+                    <SelectItem value="USDT">USDT</SelectItem>
+                    <SelectItem value="WETH">WETH</SelectItem>
+                    <SelectItem value="AVAX">AVAX</SelectItem>
+                    <SelectItem value="MATIC">MATIC</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            </div>
 
-            {/* Amount */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Amount</label>
-              <Input
-                type="number"
-                placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                disabled={isTransferring || !isConnected}
-                className="text-lg"
-              />
-            </div>
-
-            {/* Animation Container */}
-            {isTransferring && (
-              <div className="my-8">
-                <BridgeAnimation />
+              {/* Amount */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Amount</label>
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  disabled={isTransferring || !isConnected}
+                  className="text-lg"
+                />
               </div>
-            )}
 
-            {/* Send Button */}
-            <Button onClick={handleSend} disabled={!canSend} className="w-full h-12 text-lg" size="lg">
-              {isTransferring ? (
-                "Transferring..."
-              ) : (
-                <>
-                  Send <ArrowRight className="ml-2 h-5 w-5" />
-                </>
+              {/* Animation Container */}
+              {isTransferring && (
+                <div className="my-8">
+                  <BridgeAnimation />
+                </div>
               )}
-            </Button>
 
-            {/* Validation Messages */}
-            {!isConnected && (
-              <p className="text-sm text-amber-600 text-center">Please connect your wallet to continue</p>
-            )}
-            {fromChain === toChain && fromChain && (
-              <p className="text-sm text-red-500 text-center">Source and destination chains must be different</p>
-            )}
-          </CardContent>
-        </Card>
+              {/* Send Button */}
+              <Button onClick={handleSend} disabled={!canSend} className="w-full h-12 text-lg" size="lg">
+                {isTransferring ? (
+                  "Transferring..."
+                ) : (
+                  <>
+                    Send <ArrowRight className="ml-2 h-5 w-5" />
+                  </>
+                )}
+              </Button>
+
+              {/* Validation Messages */}
+              {!isConnected && (
+                <p className="text-sm text-amber-600 text-center">Please connect your wallet to continue</p>
+              )}
+              {fromChain === toChain && fromChain && (
+                <p className="text-sm text-red-500 text-center">Source and destination chains must be different</p>
+              )}
+
+              {/* Bridge Error Display */}
+              {bridgeError && (
+                <div className="flex items-center space-x-2 text-red-600 dark:text-red-400 p-3 border border-red-200 dark:border-red-800 rounded-lg">
+                  <AlertCircle className="h-4 w-4" />
+                  <span className="text-sm">{bridgeError}</span>
+                  <Button variant="ghost" size="sm" onClick={clearBridgeError} className="ml-auto">
+                    Dismiss
+                  </Button>
+                </div>
+              )}
+
+              {/* Transaction Result */}
+              {lastTransaction && (
+                <div className="p-4 border border-green-200 dark:border-green-800 rounded-lg bg-green-50 dark:bg-green-950/20">
+                  <div className="flex items-center space-x-2 text-green-800 dark:text-green-200 mb-2">
+                    <CheckCircle className="h-5 w-5" />
+                    <span className="font-medium">Bridge Transfer Successful!</span>
+                  </div>
+                  <div className="text-sm text-green-700 dark:text-green-300">
+                    <div>Transaction ID: <code className="bg-green-100 dark:bg-green-900 px-1 rounded">{lastTransaction.txId}</code></div>
+                    <div>Amount: {lastTransaction.amount} {lastTransaction.token}</div>
+                    <div>From: {lastTransaction.sourceChain} → To: {lastTransaction.destChain}</div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'advanced' && (
+          <AdvancedBridge />
+        )}
+
+        {activeTab === 'status' && (
+          <BridgeStatus onChainsUpdate={(chains) => {
+            if (chains && chains.length > 0) {
+              const transformedChains = chains.map(chain => ({
+                id: chain.name,
+                name: chain.name.charAt(0).toUpperCase() + chain.name.slice(1),
+                symbol: chain.name.toUpperCase().slice(0, 3),
+                chainId: chain.id.slice(0, 10) + '...'
+              }))
+              setAvailableChains(transformedChains)
+            }
+          }} />
+        )}
       </div>
     </div>
   )
